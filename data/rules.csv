@@ -1,0 +1,21 @@
+rule_id,category,rule_description,field_1,operator,field_2_or_value
+1,Salary,Salary increase cannot exceed 20% of previous salary,salary,<=,previous_salary*1.2
+2,Salary,Employee salary cannot exceed manager salary,salary,<=,manager.salary
+3,Salary,Employee salary must be at least 3000,salary,>=,3000
+4,Department,Department budget used cannot exceed allocated budget,budget_used,<=,budget_allocated
+5,Bonus,Bonus cannot exceed 15% of annual salary,bonus_amount,<=,salary*0.15
+6,Employee,Employee must belong to exactly one department,department_id,NOT_NULL,TRUE
+7,Hierarchy,Every employee except CEO must have one manager,manager_id,NOT_NULL,TRUE
+8,Hierarchy,Manager must be in same department as employee,department_id,=,manager.department_id
+9,Hierarchy,Manager can supervise at most 10 employees,employee_count,<=,10
+10,Hierarchy,Employee cannot manage themselves,employee_id,!=,manager_id
+11,Attendance,Employee cannot work more than 12 hours per day,hours_worked,<=,12
+12,Attendance,Employee must work at least 5 days per week,days_worked_this_week,>=,5
+13,Leave,Leave balance cannot be negative,leave_balance,>=,0
+14,Leave,Annual leave request cannot exceed leave balance,days_requested,<=,leave_balance
+15,Leave,Sick leave cannot exceed 14 consecutive days,consecutive_days,<=,14
+16,Project,Employee cannot have more than 3 active projects,active_projects_count,<=,3
+17,Project,Project spending cannot exceed project budget,total_spent,<=,budget
+18,Project,Project end date must be after start date,end_date,>,start_date
+19,Performance,Performance rating must be between 1 and 5,performance_rating,BETWEEN,1-5
+20,Bonus,Employees with rating below 2 cannot receive bonus,performance_rating,>=,2_for_bonus

@@ -1,0 +1,9 @@
+employee_id,name,department_id,manager_id,salary,previous_salary,leave_balance,performance_rating
+1,CEO,1,,15000,14000,20,5
+2,Manager_A,1,1,10000,9000,15,4
+3,Manager_B,2,1,9500,8500,10,4
+4,Emp_1,1,2,7000,6500,8,3
+5,Emp_2,1,2,6500,6000,12,2
+6,Emp_3,2,3,6000,5500,5,5
+7,Emp_4,2,3,5500,5000,7,1
+8,Emp_5,2,3,5000,4500,10,3

@@ -1,0 +1,5 @@
+request_id,employee_id,leave_type,days_requested,consecutive_days
+1,4,annual,5,5
+2,5,sick,7,7
+3,6,annual,3,3
+4,7,sick,10,10

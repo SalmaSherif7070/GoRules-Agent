@@ -1,0 +1,7 @@
+assignment_id,employee_id,project_id,is_active
+1,4,101,true
+2,4,102,true
+3,5,101,true
+4,6,103,true
+5,7,102,true
+6,8,103,true
