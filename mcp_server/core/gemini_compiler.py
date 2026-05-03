@@ -1,3 +1,14 @@
+"""
+mcp_server/core/gemini_compiler.py
+------------------------------------
+Orchestrates:
+  1. Gemini → generates GoRules decision table JSON + input_context
+  2. Zen Engine → executes the decision table
+  3. Returns ValidationResult from engine output
+
+Gemini is the COMPILER. Zen Engine is the EXECUTOR.
+"""
+
 import json
 import logging
 import re
@@ -10,6 +21,7 @@ from config import settings
 from mcp_server.models import ValidationResult, ViolatedRule
 from mcp_server.core.prompt_builder import SYSTEM_PROMPT, build_user_prompt
 from mcp_server.core.data_loader import load_all_tables_text, infer_changed_fields
+from mcp_server.core.zen_executor import execute_decision
 
 logger = logging.getLogger(__name__)
 _client: genai.Client | None = None
@@ -50,14 +62,25 @@ def compile_and_validate(
     previous_row: dict[str, Any] | None = None,
     related_context: dict[str, Any] | None = None,
 ) -> ValidationResult:
+    """
+    Compile business rules into GoRules via Gemini, then execute with Zen Engine.
+
+    Flow:
+      Gemini  → gorules_json + input_context
+      Zen     → list of violations (from COLLECT decision table)
+      Return  → ValidationResult
+    """
     schemas_text = load_all_tables_text()
     if not schemas_text:
         raise RuntimeError("No table CSVs found in data/. Ensure tables are loaded.")
 
     changed_fields = infer_changed_fields(target_row, previous_row)
-    logger.info("op=%s table=%s changed=%s rules=%d",
-                operation, target_table, changed_fields, len(rules))
+    logger.info(
+        "Compiling: op=%s table=%s changed=%s rules=%d",
+        operation, target_table, changed_fields, len(rules),
+    )
 
+    # ── Step 1: Ask Gemini to compile rules → GoRules JSON ──────────────────
     user_prompt = build_user_prompt(
         schemas_text=schemas_text,
         operation=operation.upper(),
@@ -79,18 +102,38 @@ def compile_and_validate(
         ),
     )
 
-    data = _parse_response(response.text or "")
+    compiled = _parse_response(response.text or "")
+    gorules_json: dict = compiled.get("gorules_json", {})
+    input_context: dict = compiled.get("input_context", {})
 
-    violated = [
-        ViolatedRule(rule_id=str(v["rule_id"]), reason=v["reason"])
-        for v in data.get("violated_rules", [])
+    if not gorules_json:
+        raise RuntimeError("Gemini did not return a gorules_json in its response")
+
+    logger.info(
+        "Gemini compiled GoRules: %d nodes, input_context keys=%s",
+        len(gorules_json.get("nodes", [])),
+        list(input_context.keys()),
+    )
+
+    # ── Step 2: Execute via Zen Engine ───────────────────────────────────────
+    violations_raw = execute_decision(gorules_json, input_context)
+
+    # ── Step 3: Build ValidationResult ──────────────────────────────────────
+    violated_rules = [
+        ViolatedRule(
+            rule_id=str(v.get("rule_id", "?")),
+            reason=str(v.get("reason", "Rule violated")),
+        )
+        for v in violations_raw
     ]
 
+    gorules_code = json.dumps(gorules_json, indent=2)
+
     return ValidationResult(
-        operation_valid=bool(data.get("operation_valid", False)),
-        violated_rules=violated,
-        gorules_code=data.get("gorules_code", ""),
-        execution_dependencies=data.get("execution_dependencies", []),
+        operation_valid=len(violated_rules) == 0,
+        violated_rules=violated_rules,
+        gorules_code=gorules_code,
+        execution_dependencies=[],        # zen engine handles all lookups via input_context
         changed_fields=changed_fields,
         rules_evaluated=len(rules),
     )
