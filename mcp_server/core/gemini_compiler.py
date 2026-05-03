@@ -1,12 +1,18 @@
 """
 mcp_server/core/gemini_compiler.py
 ------------------------------------
-Orchestrates:
-  1. Gemini → generates GoRules decision table JSON + input_context
-  2. Zen Engine → executes the decision table
-  3. Returns ValidationResult from engine output
+Two-phase pipeline:
 
-Gemini is the COMPILER. Zen Engine is the EXECUTOR.
+  Phase 1 — COMPILE  (Gemini)
+    Input : table schemas only + operation + rules
+    Output: needed_tables, gorules_json, input_mappings
+
+  Phase 2 — EXECUTE  (Zen Engine)
+    Input : gorules_json + input_context built from real row data
+    Output: list of violated rules → ValidationResult
+
+Gemini never sees actual row data.
+Zen never sees anything except the compiled decision table + concrete values.
 """
 
 import json
@@ -19,9 +25,15 @@ from google.genai import types
 
 from config import settings
 from mcp_server.models import ValidationResult, ViolatedRule
-from mcp_server.core.prompt_builder import SYSTEM_PROMPT, build_user_prompt
-from mcp_server.core.data_loader import load_all_tables_text, infer_changed_fields
+from mcp_server.core.prompt_builder import SYSTEM_PROMPT, build_compile_prompt
+from mcp_server.core.data_loader import (
+    load_all_schemas,
+    format_schemas_for_prompt,
+    load_tables_for_context,
+    infer_changed_fields,
+)
 from mcp_server.core.zen_executor import execute_decision
+from mcp_server.core.context_builder import build_input_context
 
 logger = logging.getLogger(__name__)
 _client: genai.Client | None = None
@@ -43,11 +55,12 @@ def _strip_fences(text: str) -> str:
     return text.strip()
 
 
-def _parse_response(raw: str) -> dict[str, Any]:
+def _parse_gemini_response(raw: str) -> dict[str, Any]:
     clean = _strip_fences(raw)
     try:
         return json.loads(clean)
     except json.JSONDecodeError:
+        # fallback: grab the outermost JSON object
         match = re.search(r"\{[\s\S]*\}", clean)
         if match:
             return json.loads(match.group(0))
@@ -63,34 +76,50 @@ def compile_and_validate(
     related_context: dict[str, Any] | None = None,
 ) -> ValidationResult:
     """
-    Compile business rules into GoRules via Gemini, then execute with Zen Engine.
+    Full pipeline: compile rules with Gemini → execute with Zen → return result.
 
-    Flow:
-      Gemini  → gorules_json + input_context
-      Zen     → list of violations (from COLLECT decision table)
-      Return  → ValidationResult
+    Args:
+        operation       : "INSERT" or "UPDATE"
+        target_table    : the table being written to
+        target_row      : new row values
+        rules           : plain-English business rules
+        previous_row    : old row values (UPDATE only)
+        related_context : optional pre-fetched data the caller already has.
+                          Merged with Zen input_context so callers can short-
+                          circuit lookups they've already done.
     """
-    schemas_text = load_all_tables_text()
-    if not schemas_text:
-        raise RuntimeError("No table CSVs found in data/. Ensure tables are loaded.")
+
+    # ── 0. Validate inputs ────────────────────────────────────────────────
+    if not rules:
+        raise RuntimeError("No business rules provided.")
 
     changed_fields = infer_changed_fields(target_row, previous_row)
     logger.info(
-        "Compiling: op=%s table=%s changed=%s rules=%d",
+        "Pipeline start: op=%s table=%s changed=%s rules=%d",
         operation, target_table, changed_fields, len(rules),
     )
 
-    # ── Step 1: Ask Gemini to compile rules → GoRules JSON ──────────────────
-    user_prompt = build_user_prompt(
+    # ── 1. Load ALL schemas (tiny — just column names + types) ───────────
+    all_schemas = load_all_schemas()
+    if not all_schemas:
+        raise RuntimeError(
+            "No table schemas found in data/. "
+            "Ensure at least one *.csv exists in the tables directory."
+        )
+    schemas_text = format_schemas_for_prompt(all_schemas)
+
+    # ── 2. Build prompt and call Gemini (schema-only, no row data) ────────
+    user_prompt = build_compile_prompt(
         schemas_text=schemas_text,
         operation=operation.upper(),
         target_table=target_table,
         target_row=target_row,
         previous_row=previous_row,
-        related_context=related_context,
         changed_fields=changed_fields,
         rules=rules,
     )
+
+    logger.debug("Sending compile prompt to Gemini (%d chars)", len(user_prompt))
 
     response = _get_client().models.generate_content(
         model=settings.gemini_model,
@@ -102,23 +131,50 @@ def compile_and_validate(
         ),
     )
 
-    compiled = _parse_response(response.text or "")
+    compiled = _parse_gemini_response(response.text or "")
+
+    # ── 3. Extract Gemini's three outputs ─────────────────────────────────
     gorules_json: dict = compiled.get("gorules_json", {})
-    input_context: dict = compiled.get("input_context", {})
+    input_mappings: dict = compiled.get("input_mappings", {})
+    needed_tables: list[str] = compiled.get("needed_tables", [])
 
     if not gorules_json:
-        raise RuntimeError("Gemini did not return a gorules_json in its response")
+        raise RuntimeError(
+            "Gemini did not return a gorules_json. "
+            f"Raw response snippet: {response.text[:300]}"
+        )
 
     logger.info(
-        "Gemini compiled GoRules: %d nodes, input_context keys=%s",
+        "Gemini compiled: %d nodes, needed_tables=%s, mappings=%d",
         len(gorules_json.get("nodes", [])),
-        list(input_context.keys()),
+        needed_tables,
+        len(input_mappings),
     )
 
-    # ── Step 2: Execute via Zen Engine ───────────────────────────────────────
+    # ── 4. Fetch actual row data for needed tables only ───────────────────
+    # This is the scalability win: only load the tables Gemini said it needs.
+    table_data = load_tables_for_context(needed_tables)
+
+    # Merge in caller-supplied related_context (optional short-circuit).
+    # Caller data takes priority over freshly loaded rows.
+    if related_context:
+        logger.debug("Merging caller-supplied related_context")
+
+    # ── 5. Build flat input_context for Zen from input_mappings ──────────
+    input_context = build_input_context(
+        input_mappings=input_mappings,
+        target_row=target_row,
+        previous_row=previous_row,
+        table_data=table_data,
+        related_context=related_context or {},
+    )
+
+    logger.info("input_context built: keys=%s", list(input_context.keys()))
+
+    # ── 6. Execute with Zen Engine ────────────────────────────────────────
     violations_raw = execute_decision(gorules_json, input_context)
 
-    # ── Step 3: Build ValidationResult ──────────────────────────────────────
+    # ── 7. Build and return ValidationResult ─────────────────────────────
     violated_rules = [
         ViolatedRule(
             rule_id=str(v.get("rule_id", "?")),
@@ -127,13 +183,11 @@ def compile_and_validate(
         for v in violations_raw
     ]
 
-    gorules_code = json.dumps(gorules_json, indent=2)
-
     return ValidationResult(
         operation_valid=len(violated_rules) == 0,
         violated_rules=violated_rules,
-        gorules_code=gorules_code,
-        execution_dependencies=[],        # zen engine handles all lookups via input_context
+        gorules_code=json.dumps(gorules_json, indent=2),
+        execution_dependencies=needed_tables,
         changed_fields=changed_fields,
         rules_evaluated=len(rules),
     )

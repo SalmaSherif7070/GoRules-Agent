@@ -2,7 +2,10 @@
 mcp_server/tools/validate_tool.py
 -----------------------------------
 MCP tool: validate_operation
-Compiles business rules and validates a data operation (INSERT / UPDATE).
+
+Thin wrapper around compile_and_validate().
+Rules are always auto-loaded from rules.csv — MCP callers never need to
+supply them manually.
 """
 
 import json
@@ -23,19 +26,19 @@ async def validate_operation(
     related_context: str | None = None,
 ) -> str:
     """
-    Compile GoRules from loaded schemas + rules and validate a data operation.
+    Validate a data operation against business rules loaded from rules.csv.
 
     Args:
         operation:       "INSERT" or "UPDATE"
         target_table:    Name of the table being modified (e.g. "employees")
         target_row:      JSON string — new / inserted row values
         previous_row:    JSON string — existing row before UPDATE (UPDATE only)
-        related_context: JSON string — pre-fetched lookups / aggregate counts
+        related_context: JSON string — optional pre-fetched lookups
 
     Returns:
         JSON string matching the ValidationResult schema.
     """
-    # MCP tools receive everything as strings; parse JSON args here
+    # Parse JSON string arguments (MCP always sends strings)
     try:
         target_dict: dict[str, Any] = json.loads(target_row)
     except json.JSONDecodeError as exc:
@@ -58,18 +61,17 @@ async def validate_operation(
     if operation.upper() not in ("INSERT", "UPDATE"):
         return json.dumps({"error": "operation must be INSERT or UPDATE"})
 
+    # Auto-load rules from CSV
+    rules_list = load_rules_list()
+    rules = [
+        f"{r.rule_id}. {r.category}: {r.rule_description}"
+        for r in rules_list
+    ]
+
+    if not rules:
+        return json.dumps({"error": "No business rules found in data/rules/rules.csv"})
+
     try:
-        # Load rules from rules.csv automatically
-        rules_list = load_rules_list()
-        # Extract rule descriptions in format: "<rule_id>. <category>: <description>"
-        rules = [
-            f"{r.rule_id}. {r.category}: {r.rule_description}"
-            for r in rules_list
-        ]
-        
-        if not rules:
-            return json.dumps({"error": "No business rules found in data/rules.csv"})
-        
         result = compile_and_validate(
             operation=operation,
             target_table=target_table,
@@ -80,5 +82,5 @@ async def validate_operation(
         )
         return result.model_dump_json(indent=2)
     except Exception as exc:
-        logger.exception("validate_operation failed")
+        logger.exception("validate_operation tool failed")
         return json.dumps({"error": str(exc)})
