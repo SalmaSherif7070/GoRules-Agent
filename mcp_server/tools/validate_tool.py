@@ -10,6 +10,7 @@ import logging
 from typing import Any
 
 from mcp_server.core.gemini_compiler import compile_and_validate
+from mcp_server.core.data_loader import load_rules_list
 
 logger = logging.getLogger(__name__)
 
@@ -58,12 +59,24 @@ async def validate_operation(
         return json.dumps({"error": "operation must be INSERT or UPDATE"})
 
     try:
+        # Load rules from rules.csv automatically
+        rules_list = load_rules_list()
+        # Extract rule descriptions in format: "<rule_id>. <category>: <description>"
+        rules = [
+            f"{r.rule_id}. {r.category}: {r.rule_description}"
+            for r in rules_list
+        ]
+        
+        if not rules:
+            return json.dumps({"error": "No business rules found in data/rules.csv"})
+        
         result = compile_and_validate(
             operation=operation,
             target_table=target_table,
             target_row=target_dict,
             previous_row=prev_dict,
             related_context=ctx_dict,
+            rules=rules,
         )
         return result.model_dump_json(indent=2)
     except Exception as exc:

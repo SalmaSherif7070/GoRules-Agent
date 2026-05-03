@@ -1,12 +1,3 @@
-"""
-mcp_server/core/gemini_compiler.py
-------------------------------------
-Sends prompts to the Gemini API and parses the structured JSON response
-into a ValidationResult.
-
-This module is the only place in the project that touches google-genai.
-"""
-
 import json
 import logging
 import re
@@ -18,15 +9,9 @@ from google.genai import types
 from config import settings
 from mcp_server.models import ValidationResult, ViolatedRule
 from mcp_server.core.prompt_builder import SYSTEM_PROMPT, build_user_prompt
-from mcp_server.core.data_loader import (
-    load_rules_text,
-    load_all_tables_text,
-    infer_changed_fields,
-)
+from mcp_server.core.data_loader import load_all_tables_text, infer_changed_fields
 
 logger = logging.getLogger(__name__)
-
-# Lazy singleton client
 _client: genai.Client | None = None
 
 
@@ -34,17 +19,12 @@ def _get_client() -> genai.Client:
     global _client
     if _client is None:
         if not settings.gemini_api_key:
-            raise RuntimeError(
-                "GEMINI_API_KEY is not set. "
-                "Add it to your .env file or export it as an environment variable."
-            )
+            raise RuntimeError("GEMINI_API_KEY is not set in .env")
         _client = genai.Client(api_key=settings.gemini_api_key)
-        logger.info("Gemini client initialised (model=%s)", settings.gemini_model)
     return _client
 
 
 def _strip_fences(text: str) -> str:
-    """Remove ```json ... ``` or ``` ... ``` markdown fences if present."""
     text = text.strip()
     text = re.sub(r"^```(?:json)?\s*", "", text)
     text = re.sub(r"\s*```$", "", text)
@@ -52,58 +32,33 @@ def _strip_fences(text: str) -> str:
 
 
 def _parse_response(raw: str) -> dict[str, Any]:
-    """
-    Try to extract a JSON object from the raw model response.
-    Handles fenced code blocks and stray leading/trailing text.
-    """
     clean = _strip_fences(raw)
     try:
         return json.loads(clean)
     except json.JSONDecodeError:
-        # Last resort: find the first { ... } block
         match = re.search(r"\{[\s\S]*\}", clean)
         if match:
             return json.loads(match.group(0))
-        raise ValueError(f"Gemini returned non-JSON response:\n{raw[:500]}")
+        raise ValueError(f"Gemini returned non-JSON:\n{raw[:500]}")
 
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
 
 def compile_and_validate(
     operation: str,
     target_table: str,
     target_row: dict[str, Any],
+    rules: list[str],
     previous_row: dict[str, Any] | None = None,
     related_context: dict[str, Any] | None = None,
 ) -> ValidationResult:
-    """
-    Full pipeline:
-      1. Load rules CSV + table schemas from disk
-      2. Detect changed fields
-      3. Build prompt
-      4. Call Gemini
-      5. Parse + return ValidationResult
-
-    Raises RuntimeError on config issues, ValueError on bad Gemini output.
-    """
-    rules_csv    = load_rules_text()
     schemas_text = load_all_tables_text()
-
-    if not rules_csv:
-        raise RuntimeError("No rules.csv found. Upload one via the upload_rules tool.")
     if not schemas_text:
-        raise RuntimeError("No table CSVs found. Upload schemas via the upload_table tool.")
+        raise RuntimeError("No table CSVs found in data/. Ensure tables are loaded.")
 
     changed_fields = infer_changed_fields(target_row, previous_row)
-    logger.info(
-        "Compiling: op=%s table=%s changed=%s",
-        operation, target_table, changed_fields,
-    )
+    logger.info("op=%s table=%s changed=%s rules=%d",
+                operation, target_table, changed_fields, len(rules))
 
     user_prompt = build_user_prompt(
-        rules_csv=rules_csv,
         schemas_text=schemas_text,
         operation=operation.upper(),
         target_table=target_table,
@@ -111,11 +66,10 @@ def compile_and_validate(
         previous_row=previous_row,
         related_context=related_context,
         changed_fields=changed_fields,
+        rules=rules,
     )
 
-    client = _get_client()
-
-    response = client.models.generate_content(
+    response = _get_client().models.generate_content(
         model=settings.gemini_model,
         contents=user_prompt,
         config=types.GenerateContentConfig(
@@ -125,10 +79,7 @@ def compile_and_validate(
         ),
     )
 
-    raw_text = response.text or ""
-    logger.debug("Gemini raw response (%d chars): %s...", len(raw_text), raw_text[:200])
-
-    data = _parse_response(raw_text)
+    data = _parse_response(response.text or "")
 
     violated = [
         ViolatedRule(rule_id=str(v["rule_id"]), reason=v["reason"])
@@ -141,8 +92,5 @@ def compile_and_validate(
         gorules_code=data.get("gorules_code", ""),
         execution_dependencies=data.get("execution_dependencies", []),
         changed_fields=changed_fields,
-        rules_evaluated=len(data.get("violated_rules", [])) + (
-            # approximate: total applicable = violated + rest
-            0
-        ),
+        rules_evaluated=len(rules),
     )
