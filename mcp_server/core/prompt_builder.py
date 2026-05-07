@@ -123,8 +123,8 @@ gorules_json FORMAT
     }
   ],
   "edges": [
-    {"id": "e1", "sourceId": "input",       "targetId": "rules_table"},
-    {"id": "e2", "sourceId": "rules_table", "targetId": "output"}
+      {"id": "e1", "type": "edge", "sourceId": "input",       "targetId": "rules_table"},
+      {"id": "e2", "type": "edge", "sourceId": "rules_table", "targetId": "output"}
   ]
 }
 

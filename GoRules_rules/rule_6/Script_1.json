@@ -69,12 +69,14 @@
     {
       "id": "e1",
       "sourceId": "input",
-      "targetId": "rules_table"
+      "targetId": "rules_table",
+      "type": "edge"
     },
     {
       "id": "e2",
       "sourceId": "rules_table",
-      "targetId": "output"
+      "targetId": "output",
+      "type": "edge"
     }
   ]
 }

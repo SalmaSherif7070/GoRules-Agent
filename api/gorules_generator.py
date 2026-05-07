@@ -93,8 +93,8 @@ OUTPUT FORMAT — return a JSON array of GoRules documents:
       {"id": "output", "type": "outputNode", "name": "Output", "position": {"x": 600, "y": 0}}
     ],
     "edges": [
-      {"id": "e1", "sourceId": "input",       "targetId": "rules_table"},
-      {"id": "e2", "sourceId": "rules_table", "targetId": "output"}
+        {"id": "e1", "type": "edge", "sourceId": "input",       "targetId": "rules_table"},
+        {"id": "e2", "type": "edge", "sourceId": "rules_table", "targetId": "output"}
     ]
   }
 ]

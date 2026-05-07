@@ -229,3 +229,4 @@ __marimo__/
 rules/*
 tables/*
 node_modules/*
+GoRules_rules/*
