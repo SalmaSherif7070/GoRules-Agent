@@ -6,6 +6,7 @@ load_dotenv()
 
 from config import settings
 from api.routes import router as api_router
+from api.gorules_generator import router as gorules_router   # ← new
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -36,6 +37,7 @@ def main():
         return RedirectResponse(url="/docs")
 
     app.include_router(api_router)
+    app.include_router(gorules_router)   # ← new
 
     logger.info("REST API → http://%s:%d/docs", args.host, args.port)
     uvicorn.run(app, host=args.host, port=args.port)

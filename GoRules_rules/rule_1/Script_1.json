@@ -1,0 +1,85 @@
+{
+  "contentType": "application/vnd.gorules.decision",
+  "nodes": [
+    {
+      "id": "input",
+      "type": "inputNode",
+      "name": "Input",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "rules_table",
+      "type": "decisionTableNode",
+      "name": "SalaryRuleCheck",
+      "position": {
+        "x": 300,
+        "y": 0
+      },
+      "content": {
+        "hitPolicy": "collect",
+        "inputs": [
+          {
+            "id": "i1",
+            "name": "Salary",
+            "field": "salary"
+          },
+          {
+            "id": "i2",
+            "name": "Previous Salary",
+            "field": "previous_salary"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "o1",
+            "name": "violated",
+            "field": "violated"
+          },
+          {
+            "id": "o2",
+            "name": "rule_id",
+            "field": "rule_id"
+          },
+          {
+            "id": "o3",
+            "name": "reason",
+            "field": "reason"
+          }
+        ],
+        "rules": [
+          {
+            "_id": "r1",
+            "i1": "> i2 * 1.2",
+            "o1": "true",
+            "o2": "1",
+            "o3": "\"Salary increase exceeds 20% of previous salary\""
+          }
+        ]
+      }
+    },
+    {
+      "id": "output",
+      "type": "outputNode",
+      "name": "Output",
+      "position": {
+        "x": 600,
+        "y": 0
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "sourceId": "input",
+      "targetId": "rules_table"
+    },
+    {
+      "id": "e2",
+      "sourceId": "rules_table",
+      "targetId": "output"
+    }
+  ]
+}
