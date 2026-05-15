@@ -57,10 +57,7 @@ class GenerateGoRulesResponse(BaseModel):
 
 _SYSTEM_PROMPT = """You are a GoRules Decision Table Compiler.
 
-For a single business rule, generate one or more GoRules JSON decision-table
-documents.  You may split the rule into multiple scripts if it involves
-multiple independent checks (e.g. a range check is two rows, but can also be
-two separate scripts for clarity).
+For a single business rule, generate one or more GoRules JSON decision-table documents.
 
 OUTPUT FORMAT — return a JSON array of GoRules documents:
 
@@ -68,9 +65,9 @@ OUTPUT FORMAT — return a JSON array of GoRules documents:
   {
     "contentType": "application/vnd.gorules.decision",
     "nodes": [
-      {"id": "input",       "type": "inputNode",         "name": "Input",        "position": {"x": 0,   "y": 0}},
+      {"id": "input",       "type": "inputNode",        "name": "Input",     "position": {"x": 0,   "y": 0}},
       {
-        "id": "rules_table","type": "decisionTableNode",  "name": "RuleCheck",   "position": {"x": 300, "y": 0},
+        "id": "rules_table","type": "decisionTableNode", "name": "RuleCheck", "position": {"x": 300, "y": 0},
         "content": {
           "hitPolicy": "collect",
           "inputs":  [{"id": "i1", "name": "<field label>", "field": "<input_key>"}],
@@ -93,18 +90,24 @@ OUTPUT FORMAT — return a JSON array of GoRules documents:
       {"id": "output", "type": "outputNode", "name": "Output", "position": {"x": 600, "y": 0}}
     ],
     "edges": [
-        {"id": "e1", "type": "edge", "sourceId": "input",       "targetId": "rules_table"},
-        {"id": "e2", "type": "edge", "sourceId": "rules_table", "targetId": "output"}
+      {"id": "e1", "type": "edge", "sourceId": "input",       "targetId": "rules_table"},
+      {"id": "e2", "type": "edge", "sourceId": "rules_table", "targetId": "output"}
     ]
   }
 ]
 
 STRICT RULES:
-1. hitPolicy must be "collect" (lowercase)
-2. Each rule row fires when the rule is BROKEN (violation condition)
-3. Input cell values are comparisons: "> 20", "< 0", "!= true"
-4. Output boolean → "true", string → "\"quoted\""
-5. Reply with ONLY the JSON array. No markdown, no explanation.
+1. hitPolicy must be "collect" (lowercase).
+2. Each rule row fires ONLY when the rule is BROKEN (violation condition).
+3. Input cell values are comparisons: "> 20", "< 0", "!= true".
+4. Output boolean → "true", string → "\"quoted\"".
+5. CRITICAL — every edge object MUST have exactly these three fields:
+       "id"       : unique string e.g. "e1"
+       "type"     : ALWAYS the string "edge" — never omit this field
+       "sourceId" : id of the source node
+       "targetId" : id of the target node
+   An edge missing "type": "edge" will crash the GoRules engine.
+6. Reply with ONLY the JSON array. No markdown, no explanation.
 """
 
 
@@ -121,7 +124,10 @@ RULE TO ENCODE:
   threshold : {rule.field_2_or_value}
 
 Generate GoRules JSON for this rule only.
+Remember: every edge object MUST include "type": "edge".
 Return a JSON array (one or more documents)."""
+
+
 
 
 # ─────────────────────────────────────────────────────────────
